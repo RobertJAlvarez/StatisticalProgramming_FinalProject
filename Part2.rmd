@@ -1,0 +1,183 @@
+---
+title: "Final Project - Robert Alvarez"
+output: html_document
+---
+
+### Import useful libraries
+```{r}
+library(dplyr)
+library(usmap)
+library(ggplot2)
+library(leaflet)
+```
+
+# 2.
+## a. From trip.csv data","for the city San Francisco","please draw a network diagram to show the busiest bike riding routes on the map. Can you identify the top 2 busiest routes?
+### Read trip.csv
+```{r}
+trips <- read.csv("trip.csv")
+station <- read.csv("station.csv")
+```
+
+### Update trips zip_code values, so they match any of the 5 in weather by using the station ID in station
+```{r}
+#Get unique cities
+cities <- unique(station$city)
+#Make a data frame "map" from city to new zip code
+city_to_zip_code <- data.frame(city=c("Mountain View","Palo Alto","Redwood City","San Francisco","San Jose"),
+                               zip_code=c(94041, 94301, 94063, 94107, 95113))
+
+#Update trips zip codes so they match one of the 5
+for (city in cities) {
+  #Get IDs of the current city
+  IDs <- station[station$city == city, ] %>% subset(select=id)
+  #Get new_zip_code
+  new_zip_code <- city_to_zip_code[city_to_zip_code$city == city,][[2]]
+  #Replace previous zip_code
+  trips$zip_code[trips$start_station_id %in% IDs$id] <- new_zip_code
+}
+#trips
+```
+
+### Get only the trips that are from San Francisco and subset the start and end station
+```{r}
+SF_zip_code <- city_to_zip_code[city_to_zip_code$city == "San Francisco",][[2]]
+SF_df <- trips[trips$zip_code == SF_zip_code,] %>% subset(select=c(start_station_id,end_station_id))
+#SF_df
+```
+
+### Erase trips that start in San Francisco and end in another city
+```{r}
+SF_stations <- station[station$city == "San Francisco",]
+SF_df <- SF_df[SF_df$end_station_id %in% SF_stations$id, ]
+#SF_df
+```
+
+### Group start to end trips and count how many of each
+```{r}
+options(dplyr.summarise.inform = FALSE)
+SF_routes <- SF_df %>% group_by(start_station_id,end_station_id) %>% summarise(n_trips = n()) %>% ungroup()
+#SF_routes
+```
+
+### Get two most concurrent trips
+```{r}
+largest_idx <- which.max(SF_routes$n_trips)
+largest <- SF_routes[largest_idx, ]
+temp <- SF_routes[-largest_idx, ]
+start <- station[station$id == largest$start_station_id, ]$name
+end <- station[station$id == largest$end_station_id, ]$name
+n_trips <- largest$n_trips
+print(paste("Route with the most amount of trips is between", start, "and", end, "with", n_trips, "trips."))
+
+largest_idx <- which.max(temp$n_trips)
+largest <- temp[largest_idx, ]
+start <- station[station$id == largest$start_station_id, ]$name
+end <- station[station$id == largest$end_station_id, ]$name
+n_trips <- largest$n_trips
+print(paste("Second route with the most amount of trips is between", start, "and", end, "with", n_trips, "trips."))
+```
+
+### Change station IDs to its lat and long coordinates by using stations df
+```{r}
+SF_routes$start_lat <- 0
+SF_routes$start_long <- 0
+SF_routes$end_lat <- 0
+SF_routes$end_long <- 0
+for (ID in unique(station$id)) {
+  SF_routes$start_lat[SF_routes$start_station_id == ID] <- station[station$id == ID,"lat"]
+  SF_routes$start_long[SF_routes$start_station_id == ID] <- station[station$id == ID,"long"]
+  SF_routes$end_lat[SF_routes$end_station_id == ID] <- station[station$id == ID,"lat"]
+  SF_routes$end_long[SF_routes$end_station_id == ID] <- station[station$id == ID,"long"]
+}
+SF_routes <- SF_routes %>% subset(select=-c(start_station_id,end_station_id))
+#SF_routes
+```
+
+### Make the plot
+```{r}
+#Make map with stations and labels
+m <- leaflet() %>%
+  setView(lng=(min(SF_stations$long)+max(SF_stations$long))/2, lat=(min(SF_stations$lat)+max(SF_stations$lat))/2, zoom=14) %>%
+  addTiles() %>%  # Add default OpenStreetMap map tiles
+  addMarkers(lng=SF_stations$long, lat=SF_stations$lat, label=SF_stations$name)
+
+#Use created map to add lines representing routes
+for (i in seq_len(nrow(SF_routes))){
+  m <- addPolylines(m, lat = as.numeric(SF_routes[i, c(2, 4)]), lng = as.numeric(SF_routes[i, c(3, 5)]), weight=2)
+}
+
+#Plot map
+m
+```
+
+## b. Repeat step (a) for the remaining cities.
+### Make a function that plot a route map for each city in trips
+```{r}
+plot_routes <- function(trips, station, city_to_zip_code) {
+  print_busiest_routes <- function(routes, station, city) {
+    cat(paste0("For the city of ", city, ":"), "\n")
+
+    largest_idx <- which.max(routes$n_trips)
+    largest <- routes[largest_idx, ]
+    temp <- routes[-largest_idx, ]
+    start <- station[station$id == largest$start_station_id, ]$name
+    end <- station[station$id == largest$end_station_id, ]$name
+    n_trips <- largest$n_trips
+    cat(paste("\tRoute with the most amount of trips is between", start, "and", end, "with", n_trips, "trips."), "\n")
+
+    largest_idx <- which.max(temp$n_trips)
+    largest <- temp[largest_idx, ]
+    start <- station[station$id == largest$start_station_id, ]$name
+    end <- station[station$id == largest$end_station_id, ]$name
+    n_trips <- largest$n_trips
+    cat(paste("\tSecond route with the most amount of trips is between", start, "and", end, "with", n_trips, "trips."), "\n")
+  }
+  #Get all 5 different zip codes
+  cities <- city_to_zip_code$city
+
+  #For each zip_code make a bike routes map
+  for (city in cities) {
+    zip_code <- city_to_zip_code[city_to_zip_code$city == city,][[2]]
+    #Get trips that start from the city of interest
+    city_df <- trips[trips$zip_code == zip_code,] %>% subset(select=c(start_station_id,end_station_id))
+    #Erase trips that finish outside the city of interest
+    city_stations <- station[station$city == city,]
+    city_df <- city_df[city_df$end_station_id %in% city_stations$id, ]
+    #Calculate amount of trips
+    routes <- city_df %>% group_by(start_station_id,end_station_id) %>% summarise(n_trips = n()) %>% ungroup()
+    #Print two busiest routes
+    print_busiest_routes(routes, station, city)
+    #Change IDs to lat and long
+    routes$start_lat <- 0
+    routes$start_long <- 0
+    routes$end_lat <- 0
+    routes$end_long <- 0
+    for (ID in unique(station$id)) {
+      routes$start_lat[routes$start_station_id == ID] <- station[station$id == ID,"lat"]
+      routes$start_long[routes$start_station_id == ID] <- station[station$id == ID,"long"]
+      routes$end_lat[routes$end_station_id == ID] <- station[station$id == ID,"lat"]
+      routes$end_long[routes$end_station_id == ID] <- station[station$id == ID,"long"]
+    }
+    routes <- routes %>% subset(select=-c(start_station_id,end_station_id))
+    #Make map with stations and labels
+    m <- leaflet() %>%
+      setView(lng=(min(city_stations$long)+max(city_stations$long))/2, lat=(min(city_stations$lat)+max(city_stations$lat))/2, zoom=14) %>%
+      addTiles() %>%  # Add default OpenStreetMap map tiles
+      addMarkers(lng=city_stations$long, lat=city_stations$lat, label=city_stations$name)
+
+    #Use created map to add lines representing routes
+    for (i in seq_len(nrow(routes))){
+      m <- addPolylines(m, lat = as.numeric(routes[i, c(2, 4)]), lng = as.numeric(routes[i, c(3, 5)]), weight=2)
+    }
+
+    #Plot map
+    print(m)
+  }
+}
+```
+
+## Make route plot for each city
+```{r}
+plot_routes(trips, station, city_to_zip_code)
+```
