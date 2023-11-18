@@ -1,1 +1,1 @@
-# StatisticalProgramming_FinalProject
+# Statistical Programming Final Project
